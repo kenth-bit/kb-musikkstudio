@@ -1,0 +1,10 @@
+execute_process(COMMAND ${DOCGEN} ${ACTUAL} RESULT_VARIABLE result OUTPUT_QUIET)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "kb_docgen feilet")
+endif()
+
+file(READ ${EXPECTED} expectedText)
+file(READ ${ACTUAL} actualText)
+if(NOT expectedText STREQUAL actualText)
+  message(FATAL_ERROR "docs/KNAPPEGUIDE.md er ikke oppdatert. Kjør: cmake --build build --target docs")
+endif()
