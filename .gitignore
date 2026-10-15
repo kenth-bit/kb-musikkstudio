@@ -1,0 +1,13 @@
+build/
+build-*/
+cmake-build-*/
+out/
+.vs/
+.vscode/
+.idea/
+*.user
+CMakeUserPresets.json
+CMakeLists.txt.user
+compile_commands.json
+__pycache__/
+*.pyc
