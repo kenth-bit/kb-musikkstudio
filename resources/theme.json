@@ -1,0 +1,12 @@
+{
+  "layout": {
+    "outerMargin": 16,
+    "panelGap": 12
+  },
+  "theme": {
+    "cornerRadius": 8
+  },
+  "colours": {
+    "accentCyan": "#3fe0ff"
+  }
+}
