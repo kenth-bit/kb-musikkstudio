@@ -123,17 +123,12 @@ if(KB_ENABLE_SANITIZERS AND NOT MSVC)
 endif()
 
 # --- Selve programmet -------------------------------------------------------
-set(KB_ICON_FILE ${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico)
-set(KB_ICON_ARGS "")
-if(EXISTS ${KB_ICON_FILE})
-  set(KB_ICON_ARGS ICON_BIG ${KB_ICON_FILE} ICON_SMALL ${KB_ICON_FILE})
-endif()
-
+# Ikonet brukes av snarveien på skrivebordet (resources/icon.ico).
+# Det bygges ikke inn i exe-filen, fordi JUCE da stopper hele bygget.
 juce_add_gui_app(KBMusikkstudio
   PRODUCT_NAME "KB Musikkstudio"
   COMPANY_NAME "KB"
-  VERSION ${PROJECT_VERSION}
-  ${KB_ICON_ARGS})
+  VERSION ${PROJECT_VERSION})
 
 target_sources(KBMusikkstudio PRIVATE src/app/Main.cpp)
 target_link_libraries(KBMusikkstudio PRIVATE
