@@ -5,6 +5,24 @@
 using namespace kb;
 using kbtest::SynthRig;
 
+KB_TEST (Synth, pad_keeps_sounding_until_every_key_in_the_chord_is_released)
+{
+    SynthRig rig;
+    rig.block ({ rig.press (60, 100), rig.press (64, 110) }, 256);
+    rig.run (1.0);
+    KB_CHECK (rig.block (256) > 0.02f);
+
+    rig.block ({ rig.release (60) }, 256);
+    KB_CHECK (rig.run (3.0) > 0.02f);
+    KB_CHECK (rig.state.isDown (64));
+    KB_CHECK_EQ (rig.synth.getNumGatedVoices(), 1);
+
+    rig.block ({ rig.release (64) }, 256);
+    KB_CHECK (rig.run (3.0) < 0.001f);
+    KB_CHECK_EQ (rig.synth.getActiveVoices(), 0);
+    KB_CHECK_EQ (rig.state.countKeysDown(), 0);
+}
+
 KB_TEST (Synth, one_note_makes_sound_and_one_voice)
 {
     SynthRig rig;

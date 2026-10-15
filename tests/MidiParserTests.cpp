@@ -1,7 +1,9 @@
 #include "TestFramework.h"
 #include "TestUtil.h"
 
+#include "midi/MidiHub.h"
 #include "midi/MidiParser.h"
+#include "midi/PackedMidi.h"
 
 #include <cstdint>
 #include <vector>
@@ -147,6 +149,23 @@ KB_TEST (MidiParser, truncated_message_is_dropped_and_next_status_recovers)
     const auto events = parse ({ 0x90, 60, 0x90, 62, 100 });
     KB_CHECK_EQ (events.size(), static_cast<size_t> (1));
     KB_CHECK_EQ (events[0].note, static_cast<std::uint8_t> (62));
+}
+
+KB_TEST (MidiParser, packed_windows_messages_release_every_key_in_a_chord)
+{
+    MidiHub hub;
+    applyPackedMidi (packMidi (0x90, 60, 100), hub);
+    applyPackedMidi (packMidi (0x90, 64, 80), hub);
+    KB_CHECK (hub.state.isDown (60));
+    KB_CHECK (hub.state.isDown (64));
+    KB_CHECK_EQ (hub.counters.midiNoteOnReceived.load(), 2u);
+
+    applyPackedMidi (packMidi (0x80, 60, 0), hub);
+    applyPackedMidi (packMidi (0x90, 64, 0), hub);
+    KB_CHECK (! hub.state.isDown (60));
+    KB_CHECK (! hub.state.isDown (64));
+    KB_CHECK_EQ (hub.counters.midiNoteOffReceived.load(), 2u);
+    KB_CHECK_EQ (hub.state.countKeysDown(), 0);
 }
 
 KB_TEST (MidiParser, data_bytes_without_status_are_ignored)

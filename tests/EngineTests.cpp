@@ -205,7 +205,7 @@ KB_TEST (Engine, panic_silences_synth_and_test_tone)
     KB_CHECK_EQ (rig.hub.counters.activeVoices.load(), 8);
 
     rig.engine.panic();
-    rig.hub.state.releaseAll();
+    KB_CHECK_EQ (rig.hub.state.countKeysDown(), 0);
     for (int i = 0; i < 20; ++i)
         rig.render (256);
 

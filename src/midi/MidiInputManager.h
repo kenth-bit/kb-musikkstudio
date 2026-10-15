@@ -12,6 +12,9 @@
 
 namespace kb
 {
+struct NativeMidi;
+
+
 /** Lytter på MIDI-enheten (pianoet), legger hendelser i køen og passer på at tilkoblingen
     kommer tilbake av seg selv hvis USB-kabelen trekkes ut og settes inn.
     Alle offentlige funksjoner skal kalles fra meldingstråden (UI-tråden). */
@@ -56,11 +59,13 @@ private:
     void closeDevice();
     void markLost (const juce::String& reason);
     static double nowSeconds();
+    bool deviceIsOpen() const noexcept;
 
     MidiHub& hub;
     Settings& settings;
 
     std::unique_ptr<juce::MidiInput> input;
+    std::unique_ptr<NativeMidi> native;
     std::vector<juce::MidiDeviceInfo> devices;
     juce::String selectedName;
     juce::String selectedIdentifier;

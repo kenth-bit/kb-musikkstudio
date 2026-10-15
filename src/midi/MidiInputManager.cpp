@@ -2,13 +2,70 @@
 #include "core/Text.h"
 
 #include "core/Logger.h"
-#include "midi/MidiParser.h"
+#include "midi/PackedMidi.h"
+
+#if JUCE_WINDOWS
+ #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+ #endif
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #include <windows.h>
+ #include <mmsystem.h>
+#endif
 
 namespace kb
 {
-MidiInputManager::MidiInputManager (MidiHub& hubToUse, Settings& settingsToUse)
-    : hub (hubToUse), settings (settingsToUse)
+struct NativeMidi
 {
+#if JUCE_WINDOWS
+    HMIDIIN handle = nullptr;
+    std::atomic<bool> accept { false };
+    std::atomic<bool> closed { false };
+    MidiHub* hub = nullptr;
+#endif
+};
+
+#if JUCE_WINDOWS
+void CALLBACK winMidiProc (HMIDIIN, UINT message, DWORD_PTR instance, DWORD_PTR data, DWORD_PTR)
+{
+    auto* port = reinterpret_cast<NativeMidi*> (instance);
+
+    if (port == nullptr || port->hub == nullptr || ! port->accept.load (std::memory_order_acquire))
+        return;
+
+    if (message == MIM_DATA)
+        applyPackedMidi (static_cast<std::uint32_t> (data), *port->hub);
+    else if (message == MIM_CLOSE)
+        port->closed.store (true, std::memory_order_release);
+}
+
+int windowsMidiIndex (const juce::String& name)
+{
+    const UINT count = midiInGetNumDevs();
+
+    for (UINT i = 0; i < count; ++i)
+    {
+        MIDIINCAPSW caps {};
+
+        if (midiInGetDevCapsW (i, &caps, sizeof (caps)) != MMSYSERR_NOERROR)
+            continue;
+
+        if (juce::String (caps.szPname) == name)
+            return static_cast<int> (i);
+    }
+
+    return -1;
+}
+#endif
+
+MidiInputManager::MidiInputManager (MidiHub& hubToUse, Settings& settingsToUse)
+    : hub (hubToUse), settings (settingsToUse), native (std::make_unique<NativeMidi>())
+{
+#if JUCE_WINDOWS
+    native->hub = &hub;
+#endif
 }
 
 MidiInputManager::~MidiInputManager()
@@ -63,11 +120,38 @@ void MidiInputManager::start()
     startTimer (500);
 }
 
+bool MidiInputManager::deviceIsOpen() const noexcept
+{
+#if JUCE_WINDOWS
+    return native != nullptr && native->handle != nullptr;
+#else
+    return input != nullptr;
+#endif
+}
+
 void MidiInputManager::refreshDeviceList()
 {
     devices.clear();
+
+#if JUCE_WINDOWS
+    const UINT count = midiInGetNumDevs();
+
+    for (UINT i = 0; i < count; ++i)
+    {
+        MIDIINCAPSW caps {};
+
+        if (midiInGetDevCapsW (i, &caps, sizeof (caps)) != MMSYSERR_NOERROR)
+            continue;
+
+        juce::MidiDeviceInfo info;
+        info.name = juce::String (caps.szPname);
+        info.identifier = "winmm:" + juce::String (static_cast<int> (i));
+        devices.push_back (info);
+    }
+#else
     for (const auto& d : juce::MidiInput::getAvailableDevices())
         devices.push_back (d);
+#endif
 }
 
 const juce::MidiDeviceInfo* MidiInputManager::findSelectedDevice() const
@@ -126,6 +210,44 @@ bool MidiInputManager::tryOpen (const juce::MidiDeviceInfo& device)
 {
     closeDevice();
 
+#if JUCE_WINDOWS
+    int index = windowsMidiIndex (device.name);
+
+    if (index < 0 && device.identifier.startsWith ("winmm:"))
+        index = device.identifier.fromFirstOccurrenceOf ("winmm:", false, false).getIntValue();
+
+    if (index < 0)
+    {
+        Logger::get().warn ("MIDI: kunne ikke åpne \""_nb + device.name + "\".");
+        return false;
+    }
+
+    native->closed.store (false);
+    native->accept.store (true, std::memory_order_release);
+
+    HMIDIIN handle = nullptr;
+    const auto err = midiInOpen (&handle,
+                                  static_cast<UINT> (index),
+                                  reinterpret_cast<DWORD_PTR> (&winMidiProc),
+                                  reinterpret_cast<DWORD_PTR> (native.get()),
+                                  CALLBACK_FUNCTION);
+
+    if (err != MMSYSERR_NOERROR || midiInStart (handle) != MMSYSERR_NOERROR)
+    {
+        native->accept.store (false, std::memory_order_release);
+
+        if (handle != nullptr)
+            midiInClose (handle);
+
+        Logger::get().warn ("MIDI: kunne ikke åpne \""_nb + device.name
+                            + "\". Et annet MIDI-program kan bruke pianoet. På Windows kan vanligvis bare ett program bruke en MIDI-enhet om gangen."_nb);
+        return false;
+    }
+
+    native->handle = handle;
+    Logger::get().info ("MIDI: koblet til \"" + device.name + "\"");
+    return true;
+#else
     auto opened = juce::MidiInput::openDevice (device.identifier, this);
 
     if (opened == nullptr)
@@ -139,10 +261,25 @@ bool MidiInputManager::tryOpen (const juce::MidiDeviceInfo& device)
     input = std::move (opened);
     Logger::get().info ("MIDI: koblet til \"" + device.name + "\"");
     return true;
+#endif
 }
 
 void MidiInputManager::closeDevice()
 {
+#if JUCE_WINDOWS
+    if (native != nullptr)
+        native->accept.store (false, std::memory_order_release);
+
+    if (native != nullptr && native->handle != nullptr)
+    {
+        const auto handle = native->handle;
+        native->handle = nullptr;
+        midiInStop (handle);
+        midiInReset (handle);
+        midiInClose (handle);
+    }
+#endif
+
     if (input != nullptr)
     {
         input->stop();
@@ -197,7 +334,12 @@ void MidiInputManager::timerCallback()
 
     if (tracker.isConnected())
     {
-        if (selected == nullptr || input == nullptr)
+#if JUCE_WINDOWS
+        const bool unplugged = native != nullptr && native->closed.load (std::memory_order_acquire);
+#else
+        const bool unplugged = false;
+#endif
+        if (selected == nullptr || ! deviceIsOpen() || unplugged)
             markLost ("pianoet ble koblet fra (\"" + selectedName + "\"). Prøver å finne det igjen."_nb);
         return;
     }
@@ -228,21 +370,21 @@ void MidiInputManager::timerCallback()
 
 void MidiInputManager::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& message)
 {
-    // Kjører på MIDI-tråden: kort og uten tung logikk.
-    MidiParser parser;
+    const auto* raw = message.getRawData();
+    const int size = message.getRawDataSize();
 
-    parser.feed (message.getRawData(), static_cast<std::size_t> (message.getRawDataSize()),
-                 [this] (const MidiEvent& e)
-                 {
-                     hub.state.apply (e);
+    if (raw == nullptr || size <= 0 || size > 3 || static_cast<std::uint8_t> (raw[0]) < 0x80)
+        return;
 
-                     if (e.type == MidiEventType::NoteOn)
-                         hub.counters.midiNoteOnReceived.fetch_add (1, std::memory_order_relaxed);
-                     else if (e.type == MidiEventType::NoteOff)
-                         hub.counters.midiNoteOffReceived.fetch_add (1, std::memory_order_relaxed);
+    std::uint32_t packed = static_cast<std::uint8_t> (raw[0]);
 
-                     hub.fifo.push (e);
-                 });
+    if (size > 1)
+        packed |= static_cast<std::uint32_t> (static_cast<std::uint8_t> (raw[1])) << 8;
+
+    if (size > 2)
+        packed |= static_cast<std::uint32_t> (static_cast<std::uint8_t> (raw[2])) << 16;
+
+    applyPackedMidi (packed, hub);
 }
 
 juce::String MidiInputManager::getStatusText() const

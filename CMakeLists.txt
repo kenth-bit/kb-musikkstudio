@@ -101,6 +101,10 @@ target_link_libraries(KBLib PUBLIC
   PRIVATE
   juce::juce_recommended_config_flags)
 
+if(WIN32)
+  target_link_libraries(KBLib PUBLIC winmm)
+endif()
+
 if(MSVC)
   target_compile_options(KBLib PUBLIC /W4 /utf-8 /wd4100 /wd4505)
   if(KB_WARNINGS_AS_ERRORS)

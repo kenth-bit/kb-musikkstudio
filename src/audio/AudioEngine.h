@@ -66,8 +66,13 @@ public:
     void setTestToneEnabled (bool shouldPlay) noexcept { testTone.setEnabled (shouldPlay); }
     bool isTestToneEnabled() const noexcept { return testTone.isEnabled(); }
 
-    /** Panic: slår av alle toner og testtonen. Trygt å kalle fra UI-tråden. */
-    void panic() noexcept { panicRequested.store (true, std::memory_order_release); }
+    /** Panic: slår av alle toner og testtonen, og slukker tangentlysene.
+        Trygt å kalle fra UI-tråden. */
+    void panic() noexcept
+    {
+        hub.state.releaseAll();
+        panicRequested.store (true, std::memory_order_release);
+    }
 
     // --- juce::AudioIODeviceCallback -----------------------------------------------------
     void audioDeviceIOCallbackWithContext (const float* const* inputChannelData, int numInputChannels,
