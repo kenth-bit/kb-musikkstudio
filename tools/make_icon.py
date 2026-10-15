@@ -7,7 +7,6 @@ Endre fargene under hvis du vil ha et annet uttrykk."""
 import math
 import pathlib
 import struct
-import zlib
 
 BACKGROUND = (12, 11, 18)
 PANEL = (29, 27, 42)
@@ -106,17 +105,17 @@ def render(size):
     return out
 
 
-def png_bytes(rows):
-    height = len(rows)
-    width = len(rows[0])
-    raw = b''.join(b'\x00' + bytes(channel for pixel in row for channel in pixel) for row in rows)
-
-    def chunk(kind, data):
-        body = kind + data
-        return struct.pack('>I', len(data)) + body + struct.pack('>I', zlib.crc32(body) & 0xffffffff)
-
-    header = struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)
-    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b'')
+def bmp_dib(rows):
+    """Klassisk BMP-ikon. JUCE på Windows leser ikke ikoner som er lagret som PNG."""
+    size = len(rows)
+    xor_rows = []
+    for row in reversed(rows):
+        xor_rows.append(b''.join(struct.pack('<BBBB', pixel[2], pixel[1], pixel[0], pixel[3]) for pixel in row))
+    mask_stride = ((size + 31) // 32) * 4
+    mask = b'\x00' * (mask_stride * size)
+    image = b''.join(xor_rows) + mask
+    header = struct.pack('<IIIHHIIIIII', 40, size, size * 2, 1, 32, 0, len(image), 0, 0, 0, 0)
+    return header + image
 
 
 def main():
@@ -124,16 +123,16 @@ def main():
     target = root / 'resources' / 'icon.ico'
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    images = [(size, png_bytes(render(size))) for size in SIZES]
+    images = [(size, bmp_dib(render(size))) for size in SIZES]
     header = struct.pack('<HHH', 0, 1, len(images))
     offset = 6 + 16 * len(images)
     directory = b''
     data = b''
 
-    for size, png in images:
+    for size, dib in images:
         stored = 0 if size >= 256 else size
-        directory += struct.pack('<BBBBHHII', stored, stored, 0, 0, 1, 32, len(png), offset + len(data))
-        data += png
+        directory += struct.pack('<BBBBHHII', stored, stored, 0, 0, 1, 32, len(dib), offset + len(data))
+        data += dib
 
     target.write_bytes(header + directory + data)
     print(f'Skrev {target} ({target.stat().st_size} byte, {len(images)} størrelser)')
